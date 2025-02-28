@@ -1,4 +1,5 @@
 import reflex as rx
+from reflex.style import toggle_color_mode
 from aprendo.pages.translation import translation_page
 from aprendo.pages.numbers import numbers_page
 
@@ -23,7 +24,11 @@ def navbar():
                 ),
             ),
             rx.heading("Aprendo", size="3"),
-            # rx.spacer(),
+            rx.spacer(),
+            rx.color_mode_cond(
+                light=rx.icon('moon', on_click=toggle_color_mode,),
+                dark=rx.icon('sun', on_click=toggle_color_mode,),
+            ),
         ),
         width="100%",
         padding="4",
@@ -54,7 +59,9 @@ def app_layout(content: rx.Component):
 
 
 # Create app and add pages
-app = rx.App()
+app = rx.App(
+    theme=rx.theme(),
+)
 app.add_page(index)
 app.add_page(
     lambda: app_layout(translation_page()),

@@ -206,7 +206,6 @@ def numbers_page():
             rx.button(
                 "Generate Random Number",
                 on_click=NumbersState.generate_new_number,
-                color_scheme="blue",
             ),
             wrap='wrap',
         ),
@@ -221,7 +220,7 @@ def numbers_page():
                     type_="number",
                 ),
             ),
-            rx.text_area(
+            rx.input(
                 placeholder="Type the number in Spanish",
                 on_change=NumbersState.set_user_answer,
                 on_key_down=NumbersState.handle_key_press,

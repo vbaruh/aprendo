@@ -1,3 +1,8 @@
+.states
+*.py[cod]
+assets/external/
+.web
+*.db
 .vscode/
 .web/
 __pycache__/
