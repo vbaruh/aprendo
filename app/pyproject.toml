@@ -1,0 +1,9 @@
+[project]
+name = "Aprendo"
+version = "0.1.0"
+description = "Application for learning Spanish"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "reflex==0.7.1",
+]
