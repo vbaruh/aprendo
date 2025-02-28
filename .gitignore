@@ -1,0 +1,4 @@
+.vscode/
+.web/
+__pycache__/
+.venv/
