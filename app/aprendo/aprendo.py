@@ -3,6 +3,9 @@ from reflex.style import toggle_color_mode
 from aprendo.pages.translation import translation_page
 from aprendo.pages.numbers import numbers_page
 
+import logging
+logging.basicConfig(level=logging.DEBUG)
+
 
 class State(rx.State):
     """The app state."""
