@@ -92,8 +92,11 @@ def clean_verb_conjugation(row: Tuple[str, str]) -> Optional[List[Tuple[str, str
         'él/ella',
         'él / ella / usted ',
         'nosotros / nosotras ',
+        'nosotros/nosotras',
         'vosotros / vosotras ',
+        'vosotros/vosotras',
         'ellos / ellas / ustedes ',
+        'ellos/ellas/ustedes',
         'nosotros/as ',
         'vosotros/as ',
         'ellos/as '
@@ -222,7 +225,7 @@ def transform_csv(input_path: str, output_file_handler: StringIO, transformation
 
 
 def main():
-    input_file = './data/spanish_to_bg_2025-03-09.csv'
+    input_file = sys.argv[1]
 
     transformations = [
         clean_verb_markers,          # Then clean verb markers
