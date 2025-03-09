@@ -2,6 +2,7 @@ import reflex as rx
 from reflex.style import toggle_color_mode
 from aprendo.pages.translation import translation_page
 from aprendo.pages.numbers import numbers_page
+from aprendo.pages.collections import collections_page
 
 
 class State(rx.State):
@@ -21,6 +22,7 @@ def navbar():
                 rx.menu.content(
                     rx.menu.item(rx.link("Translation", href="/translation")),
                     rx.menu.item(rx.link("Numbers", href="/numbers")),
+                    rx.menu.item(rx.link("Collections", href="/collections")),
                 ),
             ),
             rx.heading("Aprendo", size="3"),
@@ -32,7 +34,6 @@ def navbar():
         ),
         width="100%",
         padding="4",
-        # bg="white",
         border_bottom="1px solid #eaeaea",
     )
 
@@ -70,4 +71,8 @@ app.add_page(
 app.add_page(
     lambda: app_layout(numbers_page()),
     route="/numbers",
+)
+app.add_page(
+    lambda: app_layout(collections_page()),
+    route="/collections",
 )
