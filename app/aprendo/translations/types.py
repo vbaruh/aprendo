@@ -13,6 +13,18 @@ class TranslationDirection(str, Enum):
 
 
 @dataclass
+class TranslationIdRange:
+    start: int
+    end: int
+
+    def __str__(self) -> str:
+        return f'{self.start}-{self.end}'
+
+    def __repr__(self) -> str:
+        return f'{self.start}-{self.end}'
+
+
+@dataclass
 class Translation:
     direction: TranslationDirection
     word: str

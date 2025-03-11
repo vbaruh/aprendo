@@ -2,7 +2,9 @@ import csv
 import sqlite3
 import logging
 
-from typing import List, Tuple
+from typing import List, Tuple, Optional
+
+from aprendo.translations.types import TranslationIdRange
 
 
 logger = logging.getLogger(__name__)
@@ -62,6 +64,42 @@ class CsvTranslations:
                         (spanish_id, bulgarian_id)
                     )
 
+    def get_translations(self, source_lang: str, target_lang: str) -> List[Tuple[int, str, str]]:
+        """Get all translations as tuples of (id, source word, target word).
+
+        Args:
+            source_lang: Source language code ('es' or 'bg')
+            target_lang: Target language code ('es' or 'bg')
+
+        Returns:
+            List of tuples containing (id, source word, target translation)
+            ordered by id
+        """
+        if source_lang == 'es':
+            cursor = self._conn.execute("""
+                SELECT
+                    tr.id,
+                    s.word as source_word,
+                    b.word as target_word
+                FROM spanish_words s
+                JOIN translations tr ON tr.spanish_id = s.id
+                JOIN bulgarian_words b ON tr.bulgarian_id = b.id
+                ORDER BY s.id
+            """)
+        else:
+            cursor = self._conn.execute("""
+                SELECT
+                    tr.id,
+                    b.word as source_word,
+                    s.word as target_word
+                FROM bulgarian_words b
+                JOIN translations tr ON tr.bulgarian_id = b.id
+                JOIN spanish_words s ON tr.spanish_id = s.id
+                ORDER BY b.id
+            """)
+
+        return [(row[0], row[1], row[2]) for row in cursor.fetchall()]
+
     def get_bulgarian_translations(self, spanish_word: str) -> List[str]:
         '''Get all Bulgarian translations for a Spanish word'''
         cursor = self._conn.execute('''
@@ -91,84 +129,95 @@ class CsvTranslations:
         logger.debug('Spanish translations for %s: %s', bulgarian_word, result)
         return result
 
-    def record_translation_attempt(self, source_word: str, user_input: str, source_lang: str, target_lang: str, correct: bool) -> None:
-        '''Record a translation attempt in the translation history.
 
-        Args:
-            source_word: The word being translated
-            user_input: The translation provided by the user
-            source_lang: Source language code ('es' or 'bg')
-            target_lang: Target language code ('es' or 'bg')
-            correct: Whether the translation was correct
-        '''
-        logger.debug('Recording attempt %s', (source_lang, target_lang, source_word, user_input, correct))
-        with self._conn:
-            self._conn.execute('''
-                INSERT INTO translation_history
-                    (source_language, target_language, source_word, user_input, correct)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (source_lang, target_lang, source_word, user_input, correct))
-
-    def get_translation_history(self) -> List[Tuple]:
-        '''Get the translation history.
-        Returns list of tuples with the following items:
-          * source_language
-          * source_word
-          * user_input
-          * correct
-          * valid_translations
-        '''
-
-        cursor = self._conn.execute('''
-            SELECT source_language, source_word, user_input, correct FROM translation_history
-            ORDER BY timestamp DESC
-        ''')
-        for row in cursor.fetchall():
-            source_language = row[0]
-            source_word = row[1]
-            user_input = row[2]
-            correct = row[3]
-            valid_translations = self.get_bulgarian_translations(source_word) if source_language == 'es' else self.get_spanish_translations(source_word)
-            item = (source_language, source_word, user_input, correct, valid_translations)
-            logger.debug(f'item: {item}')
-            yield item
-
-    def get_word_for_translation(self, source_lang: str) -> str:
-        '''Get a random word that hasn\'t been used in translation exercises.
+    def get_word_for_translation(self, source_lang: str, id_ranges: Optional[List[TranslationIdRange]] = None, exclude_translation_ids: Optional[List[int]] = None) -> Tuple[int, str]:
+        '''Get a random word from translations table.
 
         Args:
             source_lang: Source language code ('es' or 'bg')
+            id_ranges: Optional list of TranslationIdRange objects to restrict word selection
+                       to specific translation IDs
+            exclude_translation_ids: Optional list of translation IDs to exclude from selection
+                                     (typically IDs that have been used previously)
 
         Returns:
-            A random word from the specified language that hasn\'t been tested yet
+            A random word from the specified language within the given ID ranges if specified
         '''
-        # Select from appropriate table based on source language
-        word_table = 'spanish_words' if source_lang == 'es' else 'bulgarian_words'
+        # Process ID ranges if provided
+        if id_ranges:
+            # Convert TranslationIdRange objects to SQL conditions on translations.id
+            range_conditions = []
+            for id_range in id_ranges:
+                if id_range.start == id_range.end:
+                    range_conditions.append(f'(t.id = {id_range.start})')
+                else:
+                    range_conditions.append(f'(t.id BETWEEN {id_range.start} AND {id_range.end})')
 
-        cursor = self._conn.execute(f'''
-            SELECT word
-            FROM {word_table}
-            WHERE word NOT IN (
-                SELECT source_word
-                FROM translation_history
-                WHERE source_language = ?
-            )
-            ORDER BY RANDOM()
-            LIMIT 1
-        ''', (source_lang,))
+            if range_conditions:
+                # Build query with ID range restrictions on translations.id
+                id_condition = ' OR '.join(range_conditions)
 
-        result = cursor.fetchone()
-        if result is None:
-            # If all words have been tested, return a random word
-            cursor = self._conn.execute(f'''
-                SELECT word
-                FROM {word_table}
+                # Add exclusion condition if provided
+                exclusion_condition = ''
+                if exclude_translation_ids and len(exclude_translation_ids) > 0:
+                    exclusion_list = ', '.join(str(id) for id in exclude_translation_ids)
+                    exclusion_condition = f' AND t.id NOT IN ({exclusion_list})'
+
+                if source_lang == 'es':
+                    query = f'''
+                        SELECT t.id, s.word
+                        FROM spanish_words s
+                        JOIN translations t ON t.spanish_id = s.id
+                        WHERE ({id_condition}){exclusion_condition}
+                        ORDER BY RANDOM()
+                        LIMIT 1
+                    '''
+                else:
+                    query = f'''
+                        SELECT t.id, b.word
+                        FROM bulgarian_words b
+                        JOIN translations t ON t.bulgarian_id = b.id
+                        WHERE {id_condition}{exclusion_condition}
+                        ORDER BY RANDOM()
+                        LIMIT 1
+                    '''
+
+                cursor = self._conn.execute(query)
+                result = cursor.fetchone()
+
+                if result is not None:
+                    return result[0], result[1]
+
+        # Fall back to selecting any random word if no ranges specified or no matches found
+        # Add exclusion condition if provided
+        exclusion_condition = ''
+        if exclude_translation_ids and len(exclude_translation_ids) > 0:
+            exclusion_list = ', '.join(str(id) for id in exclude_translation_ids)
+            exclusion_condition = f' WHERE t.id NOT IN ({exclusion_list})'
+
+        if source_lang == 'es':
+            query = f'''
+                SELECT t.id, s.word
+                FROM spanish_words s
+                JOIN translations t ON t.spanish_id = s.id
+                {exclusion_condition}
                 ORDER BY RANDOM()
                 LIMIT 1
-            ''')
-            result = cursor.fetchone()
+            '''
+        else:
+            query = f'''
+                SELECT t.id, b.word
+                FROM bulgarian_words b
+                JOIN translations t ON t.bulgarian_id = b.id
+                {exclusion_condition}
+                ORDER BY RANDOM()
+                LIMIT 1
+            '''
 
-        return result[0]
+        cursor = self._conn.execute(query)
+        result = cursor.fetchone()
+
+        return result[0], result[1]
 
     def dump_db_info(self) -> None:
         queries = (
@@ -196,25 +245,14 @@ class CsvTranslations:
             );
 
             CREATE TABLE IF NOT EXISTS translations (
+                id INTEGER PRIMARY KEY,
                 spanish_id INTEGER,
                 bulgarian_id INTEGER,
                 FOREIGN KEY (spanish_id) REFERENCES spanish_words (id),
-                FOREIGN KEY (bulgarian_id) REFERENCES bulgarian_words (id),
-                PRIMARY KEY (spanish_id, bulgarian_id)
-            );
-
-            CREATE TABLE IF NOT EXISTS translation_history (
-                id INTEGER PRIMARY KEY,
-                source_language TEXT NOT NULL CHECK (source_language IN ('es', 'bg')),
-                target_language TEXT NOT NULL CHECK (target_language IN ('es', 'bg')),
-                source_word TEXT NOT NULL,
-                user_input TEXT NOT NULL,
-                correct BOOLEAN NOT NULL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                FOREIGN KEY (bulgarian_id) REFERENCES bulgarian_words (id)
             );
 
             CREATE INDEX IF NOT EXISTS idx_spanish_word ON spanish_words(word);
             CREATE INDEX IF NOT EXISTS idx_bulgarian_word ON bulgarian_words(word);
-            CREATE INDEX IF NOT EXISTS idx_history_source ON translation_history(source_language, source_word);
-            CREATE INDEX IF NOT EXISTS idx_history_timestamp ON translation_history(timestamp);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_translations ON translations(spanish_id, bulgarian_id);
         ''')
