@@ -1,5 +1,6 @@
 import os
 import reflex as rx
+
 import threading
 import logging
 
@@ -29,6 +30,12 @@ def _translations() -> CsvTranslations:
     return csv
 
 
+class Translation(rx.Base):
+    id: str
+    source_lang: str
+    target_lang: str
+
+
 class TranslationAttempt(rx.Base):
     source_word: str
     user_translation: str
@@ -43,6 +50,16 @@ class TranslationState(rx.State):
     user_input: str = ''
     attempts: List[TranslationAttempt] = []
     _has_checked_translation: bool = True
+    show_settings: bool = False
+
+    @rx.var
+    def translations(self) -> List[Translation]:
+        """Return list of all translations."""
+        return [
+            Translation(id=translation[0], source_lang=translation[1], target_lang=translation[2])
+            # {'id': translation[0], 'source_lang': translation[1], 'target_lang': translation[2]}
+            for translation in _translations().get_translations('es', 'bg')
+        ]
 
     @rx.var(cache=False)
     def current_word_checked(self) -> bool:
@@ -141,6 +158,74 @@ def translation_table() -> rx.Component:
         width="100%",
     )
 
+
+def translation_container() -> rx.Component:
+    """Create a scrollable table for translations."""
+    return rx.table.root(
+        rx.table.header(
+            rx.table.row(
+                rx.table.column_header_cell('ID'),
+                rx.table.column_header_cell('Spanish'),
+                rx.table.column_header_cell('Bulgarian'),
+            ),
+        ),
+        rx.table.body(
+            rx.foreach(
+                TranslationState.translations,
+                lambda translation: rx.table.row(
+                    rx.table.cell(translation.id),
+                    rx.table.cell(translation.source_lang),
+                    rx.table.cell(translation.target_lang),
+                ),
+            ),
+        ),
+        width='100%',
+    )
+
+
+def translation_settings_dialog() -> rx.Component:
+    """Create the translation settings dialog with translations table."""
+    return rx.dialog.root(
+        rx.dialog.trigger(rx.button('Settings')),
+        rx.dialog.content(
+            rx.dialog.title('Translation Settings'),
+            rx.dialog.description('List one or more translation ranges in the format 1-10,240-300,...'),
+            rx.flex(
+                # Fixed header section
+                rx.flex(
+                    rx.input(width='90%'),
+                    rx.dialog.close(rx.button('Close')),
+                    direction='row',
+                    justify='between',
+                    align_items='center',
+                    width='100%',
+                    padding='4',
+                    border_bottom='1px solid #eaeaea',
+                    # background_color='white',
+                    position='sticky',
+                    top='0',
+                    z_index='1',
+                ),
+                # Scrollable content section
+                rx.box(
+                    translation_container(),
+                    width='100%',
+                    overflow='auto',
+                    flex='1',
+                    padding='4',
+                ),
+                direction='column',
+                width='100%',
+                height='80vh',
+                overflow='hidden',
+            ),
+            width='100%',
+            height='80vh',
+            max_width='90vw',
+        ),
+    )
+
+
 def translation_page():
     """The translation exercise page."""
     return rx.vstack(
@@ -162,18 +247,21 @@ def translation_page():
                 placeholder='Enter translation',
                 width='100%',
             ),
-            rx.cond(
-                ~TranslationState.current_word_checked,
-                rx.button(
-                    'Check Translation',
-                    type='submit',
-                    color_scheme='blue',
+            rx.vstack(
+                rx.cond(
+                    ~TranslationState.current_word_checked,
+                    rx.button(
+                        'Check Translation',
+                        type='submit',
+                        color_scheme='blue',
+                    ),
+                    rx.button(
+                        'Next Word',
+                        type='submit',
+                        color_scheme='green',
+                    ),
                 ),
-                rx.button(
-                    'Next Word',
-                    type='submit',
-                    color_scheme='blue',
-                ),
+                translation_settings_dialog(),
             ),
             on_submit=TranslationState.check_translation,
             width='100%',

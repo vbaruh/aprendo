@@ -62,6 +62,49 @@ class CsvTranslations:
                         (spanish_id, bulgarian_id)
                     )
 
+    def get_translations(self, source_lang: str, target_lang: str) -> List[Tuple[int, str, str]]:
+        """Get all translations as tuples of (id, source word, target word).
+
+        Args:
+            source_lang: Source language code ('es' or 'bg')
+            target_lang: Target language code ('es' or 'bg')
+
+        Returns:
+            List of tuples containing (id, source word, target translation)
+            ordered by id
+        """
+        if source_lang == 'es':
+            source_table = 'spanish_words'
+            target_table = 'bulgarian_words'
+        else:
+            source_table = 'bulgarian_words'
+            target_table = 'spanish_words'
+
+        if source_lang == 'es':
+            cursor = self._conn.execute("""
+                SELECT
+                    s.id,
+                    s.word as source_word,
+                    b.word as target_word
+                FROM spanish_words s
+                JOIN translations tr ON tr.spanish_id = s.id
+                JOIN bulgarian_words b ON tr.bulgarian_id = b.id
+                ORDER BY s.id
+            """)
+        else:
+            cursor = self._conn.execute("""
+                SELECT
+                    b.id,
+                    b.word as source_word,
+                    s.word as target_word
+                FROM bulgarian_words b
+                JOIN translations tr ON tr.bulgarian_id = b.id
+                JOIN spanish_words s ON tr.spanish_id = s.id
+                ORDER BY b.id
+            """)
+
+        return [(row[0], row[1], row[2]) for row in cursor.fetchall()]
+
     def get_bulgarian_translations(self, spanish_word: str) -> List[str]:
         '''Get all Bulgarian translations for a Spanish word'''
         cursor = self._conn.execute('''
