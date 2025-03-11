@@ -74,13 +74,6 @@ class CsvTranslations:
             ordered by id
         """
         if source_lang == 'es':
-            source_table = 'spanish_words'
-            target_table = 'bulgarian_words'
-        else:
-            source_table = 'bulgarian_words'
-            target_table = 'spanish_words'
-
-        if source_lang == 'es':
             cursor = self._conn.execute("""
                 SELECT
                     s.id,
