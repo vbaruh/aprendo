@@ -78,7 +78,7 @@ class CsvTranslations:
         if source_lang == 'es':
             cursor = self._conn.execute("""
                 SELECT
-                    s.id,
+                    tr.id,
                     s.word as source_word,
                     b.word as target_word
                 FROM spanish_words s
@@ -89,7 +89,7 @@ class CsvTranslations:
         else:
             cursor = self._conn.execute("""
                 SELECT
-                    b.id,
+                    tr.id,
                     b.word as source_word,
                     s.word as target_word
                 FROM bulgarian_words b
@@ -129,47 +129,6 @@ class CsvTranslations:
         logger.debug('Spanish translations for %s: %s', bulgarian_word, result)
         return result
 
-    def record_translation_attempt(self, source_word: str, user_input: str, source_lang: str, target_lang: str, correct: bool) -> None:
-        '''Record a translation attempt in the translation history.
-
-        Args:
-            source_word: The word being translated
-            user_input: The translation provided by the user
-            source_lang: Source language code ('es' or 'bg')
-            target_lang: Target language code ('es' or 'bg')
-            correct: Whether the translation was correct
-        '''
-        logger.debug('Recording attempt %s', (source_lang, target_lang, source_word, user_input, correct))
-        with self._conn:
-            self._conn.execute('''
-                INSERT INTO translation_history
-                    (source_language, target_language, source_word, user_input, correct)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (source_lang, target_lang, source_word, user_input, correct))
-
-    def get_translation_history(self) -> List[Tuple]:
-        '''Get the translation history.
-        Returns list of tuples with the following items:
-          * source_language
-          * source_word
-          * user_input
-          * correct
-          * valid_translations
-        '''
-
-        cursor = self._conn.execute('''
-            SELECT source_language, source_word, user_input, correct FROM translation_history
-            ORDER BY timestamp DESC
-        ''')
-        for row in cursor.fetchall():
-            source_language = row[0]
-            source_word = row[1]
-            user_input = row[2]
-            correct = row[3]
-            valid_translations = self.get_bulgarian_translations(source_word) if source_language == 'es' else self.get_spanish_translations(source_word)
-            item = (source_language, source_word, user_input, correct, valid_translations)
-            logger.debug(f'item: {item}')
-            yield item
 
     def get_word_for_translation(self, source_lang: str, id_ranges: Optional[List[TranslationIdRange]] = None) -> str:
         '''Get a random word from translations table.
@@ -184,24 +143,18 @@ class CsvTranslations:
         '''
         # Process ID ranges if provided
         if id_ranges:
-            # Convert TranslationIdRange objects to SQL conditions
+            # Convert TranslationIdRange objects to SQL conditions on translations.id
             range_conditions = []
             for id_range in id_ranges:
-                if source_lang == 'es':
-                    if id_range.start == id_range.end:
-                        range_conditions.append(f'(s.id = {id_range.start})')
-                    else:
-                        range_conditions.append(f'(s.id BETWEEN {id_range.start} AND {id_range.end})')
+                if id_range.start == id_range.end:
+                    range_conditions.append(f'(t.id = {id_range.start})')
                 else:
-                    if id_range.start == id_range.end:
-                        range_conditions.append(f'(b.id = {id_range.start})')
-                    else:
-                        range_conditions.append(f'(b.id BETWEEN {id_range.start} AND {id_range.end})')
-            
+                    range_conditions.append(f'(t.id BETWEEN {id_range.start} AND {id_range.end})')
+
             if range_conditions:
-                # Build query with ID range restrictions
+                # Build query with ID range restrictions on translations.id
                 id_condition = ' OR '.join(range_conditions)
-                
+
                 if source_lang == 'es':
                     query = f'''
                         SELECT s.word
@@ -220,13 +173,13 @@ class CsvTranslations:
                         ORDER BY RANDOM()
                         LIMIT 1
                     '''
-                
+
                 cursor = self._conn.execute(query)
                 result = cursor.fetchone()
-                
+
                 if result is not None:
                     return result[0]
-        
+
         # Fall back to selecting any random word if no ranges specified or no matches found
         if source_lang == 'es':
             query = '''
@@ -244,10 +197,10 @@ class CsvTranslations:
                 ORDER BY RANDOM()
                 LIMIT 1
             '''
-        
+
         cursor = self._conn.execute(query)
         result = cursor.fetchone()
-        
+
         # If still no result (unlikely), just get any word from the table
         if result is None:
             word_table = 'spanish_words' if source_lang == 'es' else 'bulgarian_words'
@@ -287,25 +240,14 @@ class CsvTranslations:
             );
 
             CREATE TABLE IF NOT EXISTS translations (
+                id INTEGER PRIMARY KEY,
                 spanish_id INTEGER,
                 bulgarian_id INTEGER,
                 FOREIGN KEY (spanish_id) REFERENCES spanish_words (id),
-                FOREIGN KEY (bulgarian_id) REFERENCES bulgarian_words (id),
-                PRIMARY KEY (spanish_id, bulgarian_id)
-            );
-
-            CREATE TABLE IF NOT EXISTS translation_history (
-                id INTEGER PRIMARY KEY,
-                source_language TEXT NOT NULL CHECK (source_language IN ('es', 'bg')),
-                target_language TEXT NOT NULL CHECK (target_language IN ('es', 'bg')),
-                source_word TEXT NOT NULL,
-                user_input TEXT NOT NULL,
-                correct BOOLEAN NOT NULL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                FOREIGN KEY (bulgarian_id) REFERENCES bulgarian_words (id)
             );
 
             CREATE INDEX IF NOT EXISTS idx_spanish_word ON spanish_words(word);
             CREATE INDEX IF NOT EXISTS idx_bulgarian_word ON bulgarian_words(word);
-            CREATE INDEX IF NOT EXISTS idx_history_source ON translation_history(source_language, source_word);
-            CREATE INDEX IF NOT EXISTS idx_history_timestamp ON translation_history(timestamp);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_translations ON translations(spanish_id, bulgarian_id);
         ''')
