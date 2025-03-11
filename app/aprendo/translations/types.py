@@ -1,5 +1,6 @@
 from enum import Enum
 from dataclasses import dataclass
+from typing import Optional
 
 
 class Languages(str, Enum):
@@ -10,6 +11,12 @@ class Languages(str, Enum):
 class TranslationDirection(str, Enum):
     SP_TO_BG = 'Spanish → Bulgarian'
     BG_TO_SP = 'Bulgarian → Spanish'
+
+
+@dataclass
+class TranslationIdRange:
+    start: int
+    end: int
 
 
 @dataclass

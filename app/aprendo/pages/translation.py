@@ -7,7 +7,7 @@ import logging
 from typing import List
 
 from aprendo.translations.csv import CsvTranslations
-from aprendo.translations.types import TranslationDirection
+from aprendo.translations.types import TranslationDirection, TranslationIdRange
 
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,9 @@ class TranslationState(rx.State):
     attempts: List[TranslationAttempt] = []
     _has_checked_translation: bool = True
     show_settings: bool = False
+    translation_ranges: str = ''
+    translation_ranges_error: str = ''
+    parsed_id_ranges: List[TranslationIdRange] = None
 
     @rx.var
     def translations(self) -> List[Translation]:
@@ -105,18 +108,95 @@ class TranslationState(rx.State):
         self._has_checked_translation = True
 
     @rx.event
+    def validate_translation_ranges(self) -> bool:
+        """Validate the translation ranges input and create TranslationIdRange objects.
+
+        The input should be either empty or a comma-separated list of ranges.
+        Each range should be two integers separated by a dash, with the first integer
+        smaller than the second.
+
+        Returns:
+            bool: True if the input is valid, False otherwise.
+        """
+        # Clear any previous parsed ranges
+        temp_id_ranges = []
+
+        # Handle empty input
+        if not self.translation_ranges.strip():
+            self.translation_ranges_error = ''
+            self.parsed_id_ranges = None
+            return True
+
+        # Split by comma and process each range
+        ranges = self.translation_ranges.split(',')
+        for range_str in ranges:
+            range_str = range_str.strip()
+            if not range_str:
+                continue
+
+            # Check for dash separator
+            if '-' not in range_str:
+                self.translation_ranges_error = f'Invalid range format: {range_str}. Expected format: start-end'
+                return False
+
+            # Parse and validate start and end values
+            try:
+                start_str, end_str = range_str.split('-', 1)
+                start = int(start_str.strip())
+                end = int(end_str.strip())
+
+                # Validate range values
+                if start > end:
+                    self.translation_ranges_error = f'Invalid range: {start}-{end}. Start must be less than or equal to end.'
+                    return False
+
+                if start <= 0 or end <= 0:
+                    self.translation_ranges_error = f'Invalid range: {start}-{end}. IDs must be positive.'
+                    return False
+
+                # Create and store TranslationIdRange object
+                temp_id_ranges.append(TranslationIdRange(start=start, end=end))
+
+            except ValueError:
+                self.translation_ranges_error = f'Invalid range format: {range_str}. Expected format: start-end with integer values.'
+                return False
+
+        # If we got here, all ranges are valid
+        self.translation_ranges_error = ''
+        self.parsed_id_ranges = temp_id_ranges
+        return True
+
+    @rx.event
+    def apply_translation_ranges(self):
+        """Apply the validated translation ranges and close the dialog."""
+        if self.validate_translation_ranges():
+            # Clear any previous error
+            self.translation_ranges_error = ''
+            # Close the dialog
+            self.show_settings = False
+
+    @rx.event
     def next_word(self):
         """Pick the next word randomly."""
 
         # Pick next word
         source_lang = 'es' if self.direction == TranslationDirection.SP_TO_BG else 'bg'
-        self.current_word = _translations().get_word_for_translation(source_lang)
-        self.user_input = ""
+
+        # Use the stored parsed_id_ranges
+        self.current_word = _translations().get_word_for_translation(source_lang, self.parsed_id_ranges)
+        self.user_input = ''
         self._has_checked_translation = False
 
     def set_user_input(self, value: str):
         """Set the user's input."""
         self.user_input = value
+
+    def set_translation_ranges(self, value: str):
+        """Set the translation ranges input."""
+        self.translation_ranges = value
+        # Clear error when user is typing
+        if self.translation_ranges_error:
+            self.translation_ranges_error = ''
 
 
 def translation_table() -> rx.Component:
@@ -193,15 +273,43 @@ def translation_settings_dialog() -> rx.Component:
             rx.flex(
                 # Fixed header section
                 rx.flex(
-                    rx.input(width='90%'),
-                    rx.dialog.close(rx.button('Close')),
+                    rx.vstack(
+                        rx.input(
+                            value=TranslationState.translation_ranges,
+                            on_change=TranslationState.set_translation_ranges,
+                            placeholder='e.g., 1-10,20-30',
+                            width='100%',
+                        ),
+                        rx.cond(
+                            TranslationState.translation_ranges_error != '',
+                            rx.text(
+                                TranslationState.translation_ranges_error,
+                                color='red',
+                                font_size='0.8em',
+                            ),
+                            rx.text(
+                                'Selected ranges: ' + TranslationState.translation_ranges,
+                                font_size='0.8em',
+                            ),
+                        ),
+                        width='90%',
+                        align_items='start',
+                        spacing='1',
+                    ),
+                    rx.hstack(
+                        rx.button(
+                            'Apply',
+                            on_click=TranslationState.apply_translation_ranges,
+                        ),
+                        rx.dialog.close(rx.button('Close')),
+                        spacing='2',
+                    ),
                     direction='row',
                     justify='between',
-                    align_items='center',
+                    align_items='start',
                     width='100%',
                     padding='4',
                     border_bottom='1px solid #eaeaea',
-                    # background_color='white',
                     position='sticky',
                     top='0',
                     z_index='1',
@@ -262,6 +370,13 @@ def translation_page():
                     ),
                 ),
                 translation_settings_dialog(),
+                rx.cond(
+                    TranslationState.translation_ranges != '',
+                    rx.text(
+                        'Selected ranges: ' + TranslationState.translation_ranges,
+                        font_size='0.8em',
+                    ),
+                ),
             ),
             on_submit=TranslationState.check_translation,
             width='100%',

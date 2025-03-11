@@ -2,7 +2,9 @@ import csv
 import sqlite3
 import logging
 
-from typing import List, Tuple
+from typing import List, Tuple, Optional
+
+from aprendo.translations.types import TranslationIdRange
 
 
 logger = logging.getLogger(__name__)
@@ -169,33 +171,86 @@ class CsvTranslations:
             logger.debug(f'item: {item}')
             yield item
 
-    def get_word_for_translation(self, source_lang: str) -> str:
-        '''Get a random word that hasn\'t been used in translation exercises.
+    def get_word_for_translation(self, source_lang: str, id_ranges: Optional[List[TranslationIdRange]] = None) -> str:
+        '''Get a random word from translations table.
 
         Args:
             source_lang: Source language code ('es' or 'bg')
+            id_ranges: Optional list of TranslationIdRange objects to restrict word selection
+                       to specific translation IDs
 
         Returns:
-            A random word from the specified language that hasn\'t been tested yet
+            A random word from the specified language within the given ID ranges if specified
         '''
-        # Select from appropriate table based on source language
-        word_table = 'spanish_words' if source_lang == 'es' else 'bulgarian_words'
-
-        cursor = self._conn.execute(f'''
-            SELECT word
-            FROM {word_table}
-            WHERE word NOT IN (
-                SELECT source_word
-                FROM translation_history
-                WHERE source_language = ?
-            )
-            ORDER BY RANDOM()
-            LIMIT 1
-        ''', (source_lang,))
-
+        # Process ID ranges if provided
+        if id_ranges:
+            # Convert TranslationIdRange objects to SQL conditions
+            range_conditions = []
+            for id_range in id_ranges:
+                if source_lang == 'es':
+                    if id_range.start == id_range.end:
+                        range_conditions.append(f'(s.id = {id_range.start})')
+                    else:
+                        range_conditions.append(f'(s.id BETWEEN {id_range.start} AND {id_range.end})')
+                else:
+                    if id_range.start == id_range.end:
+                        range_conditions.append(f'(b.id = {id_range.start})')
+                    else:
+                        range_conditions.append(f'(b.id BETWEEN {id_range.start} AND {id_range.end})')
+            
+            if range_conditions:
+                # Build query with ID range restrictions
+                id_condition = ' OR '.join(range_conditions)
+                
+                if source_lang == 'es':
+                    query = f'''
+                        SELECT s.word
+                        FROM spanish_words s
+                        JOIN translations t ON t.spanish_id = s.id
+                        WHERE {id_condition}
+                        ORDER BY RANDOM()
+                        LIMIT 1
+                    '''
+                else:
+                    query = f'''
+                        SELECT b.word
+                        FROM bulgarian_words b
+                        JOIN translations t ON t.bulgarian_id = b.id
+                        WHERE {id_condition}
+                        ORDER BY RANDOM()
+                        LIMIT 1
+                    '''
+                
+                cursor = self._conn.execute(query)
+                result = cursor.fetchone()
+                
+                if result is not None:
+                    return result[0]
+        
+        # Fall back to selecting any random word if no ranges specified or no matches found
+        if source_lang == 'es':
+            query = '''
+                SELECT s.word
+                FROM spanish_words s
+                JOIN translations t ON t.spanish_id = s.id
+                ORDER BY RANDOM()
+                LIMIT 1
+            '''
+        else:
+            query = '''
+                SELECT b.word
+                FROM bulgarian_words b
+                JOIN translations t ON t.bulgarian_id = b.id
+                ORDER BY RANDOM()
+                LIMIT 1
+            '''
+        
+        cursor = self._conn.execute(query)
         result = cursor.fetchone()
+        
+        # If still no result (unlikely), just get any word from the table
         if result is None:
-            # If all words have been tested, return a random word
+            word_table = 'spanish_words' if source_lang == 'es' else 'bulgarian_words'
             cursor = self._conn.execute(f'''
                 SELECT word
                 FROM {word_table}
