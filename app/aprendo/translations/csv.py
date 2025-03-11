@@ -130,13 +130,15 @@ class CsvTranslations:
         return result
 
 
-    def get_word_for_translation(self, source_lang: str, id_ranges: Optional[List[TranslationIdRange]] = None) -> str:
+    def get_word_for_translation(self, source_lang: str, id_ranges: Optional[List[TranslationIdRange]] = None, exclude_translation_ids: Optional[List[int]] = None) -> Tuple[int, str]:
         '''Get a random word from translations table.
 
         Args:
             source_lang: Source language code ('es' or 'bg')
             id_ranges: Optional list of TranslationIdRange objects to restrict word selection
                        to specific translation IDs
+            exclude_translation_ids: Optional list of translation IDs to exclude from selection
+                                     (typically IDs that have been used previously)
 
         Returns:
             A random word from the specified language within the given ID ranges if specified
@@ -155,21 +157,27 @@ class CsvTranslations:
                 # Build query with ID range restrictions on translations.id
                 id_condition = ' OR '.join(range_conditions)
 
+                # Add exclusion condition if provided
+                exclusion_condition = ''
+                if exclude_translation_ids and len(exclude_translation_ids) > 0:
+                    exclusion_list = ', '.join(str(id) for id in exclude_translation_ids)
+                    exclusion_condition = f' AND t.id NOT IN ({exclusion_list})'
+
                 if source_lang == 'es':
                     query = f'''
-                        SELECT s.word
+                        SELECT t.id, s.word
                         FROM spanish_words s
                         JOIN translations t ON t.spanish_id = s.id
-                        WHERE {id_condition}
+                        WHERE ({id_condition}){exclusion_condition}
                         ORDER BY RANDOM()
                         LIMIT 1
                     '''
                 else:
                     query = f'''
-                        SELECT b.word
+                        SELECT t.id, b.word
                         FROM bulgarian_words b
                         JOIN translations t ON t.bulgarian_id = b.id
-                        WHERE {id_condition}
+                        WHERE {id_condition}{exclusion_condition}
                         ORDER BY RANDOM()
                         LIMIT 1
                     '''
@@ -178,22 +186,30 @@ class CsvTranslations:
                 result = cursor.fetchone()
 
                 if result is not None:
-                    return result[0]
+                    return result[0], result[1]
 
         # Fall back to selecting any random word if no ranges specified or no matches found
+        # Add exclusion condition if provided
+        exclusion_condition = ''
+        if exclude_translation_ids and len(exclude_translation_ids) > 0:
+            exclusion_list = ', '.join(str(id) for id in exclude_translation_ids)
+            exclusion_condition = f' WHERE t.id NOT IN ({exclusion_list})'
+
         if source_lang == 'es':
-            query = '''
-                SELECT s.word
+            query = f'''
+                SELECT t.id, s.word
                 FROM spanish_words s
                 JOIN translations t ON t.spanish_id = s.id
+                {exclusion_condition}
                 ORDER BY RANDOM()
                 LIMIT 1
             '''
         else:
-            query = '''
-                SELECT b.word
+            query = f'''
+                SELECT t.id, b.word
                 FROM bulgarian_words b
                 JOIN translations t ON t.bulgarian_id = b.id
+                {exclusion_condition}
                 ORDER BY RANDOM()
                 LIMIT 1
             '''
@@ -201,18 +217,7 @@ class CsvTranslations:
         cursor = self._conn.execute(query)
         result = cursor.fetchone()
 
-        # If still no result (unlikely), just get any word from the table
-        if result is None:
-            word_table = 'spanish_words' if source_lang == 'es' else 'bulgarian_words'
-            cursor = self._conn.execute(f'''
-                SELECT word
-                FROM {word_table}
-                ORDER BY RANDOM()
-                LIMIT 1
-            ''')
-            result = cursor.fetchone()
-
-        return result[0]
+        return result[0], result[1]
 
     def dump_db_info(self) -> None:
         queries = (

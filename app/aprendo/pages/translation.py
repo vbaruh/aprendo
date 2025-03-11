@@ -37,6 +37,7 @@ class Translation(rx.Base):
 
 
 class TranslationAttempt(rx.Base):
+    translation_id: int
     source_word: str
     user_translation: str
     is_correct: bool
@@ -54,6 +55,15 @@ class TranslationState(rx.State):
     translation_ranges: str = ''
     translation_ranges_error: str = ''
     parsed_id_ranges: List[TranslationIdRange] = None
+    _current_translation_id: int = None
+
+    @rx.var
+    def has_id_ranges(self) -> bool:
+        return self.parsed_id_ranges is not None and len(self.parsed_id_ranges) > 0
+
+    @rx.var
+    def display_id_ranges(self) -> str:
+        return str(self.parsed_id_ranges) if self.has_id_ranges else ''
 
     @rx.var
     def translations(self) -> List[Translation]:
@@ -89,6 +99,7 @@ class TranslationState(rx.State):
 
         if self.user_input == '':
             self.attempts.insert(0, TranslationAttempt(
+                translation_id=self._current_translation_id,
                 source_word=source,
                 user_translation='(skipped)',
                 is_correct=False,
@@ -99,6 +110,7 @@ class TranslationState(rx.State):
             is_correct = self.user_input.lower().strip() in [t.lower() for t in expected]
 
             self.attempts.insert(0, TranslationAttempt(
+                translation_id=self._current_translation_id,
                 source_word=source,
                 user_translation=self.user_input,
                 is_correct=is_correct,
@@ -182,8 +194,9 @@ class TranslationState(rx.State):
         # Pick next word
         source_lang = 'es' if self.direction == TranslationDirection.SP_TO_BG else 'bg'
 
+        used_translation_ids = [a.translation_id for a in self.attempts]
         # Use the stored parsed_id_ranges
-        self.current_word = _translations().get_word_for_translation(source_lang, self.parsed_id_ranges)
+        self._current_translation_id, self.current_word = _translations().get_word_for_translation(source_lang, self.parsed_id_ranges, used_translation_ids)
         self.user_input = ''
         self._has_checked_translation = False
 
@@ -287,9 +300,12 @@ def translation_settings_dialog() -> rx.Component:
                                 color='red',
                                 font_size='0.8em',
                             ),
-                            rx.text(
-                                'Selected ranges: ' + TranslationState.translation_ranges,
-                                font_size='0.8em',
+                            rx.cond(
+                                TranslationState.has_id_ranges,
+                                rx.text(
+                                    'Selected ranges: ' + TranslationState.display_id_ranges,
+                                    font_size='0.8em',
+                                ),
                             ),
                         ),
                         width='90%',
@@ -371,9 +387,9 @@ def translation_page():
                 ),
                 translation_settings_dialog(),
                 rx.cond(
-                    TranslationState.translation_ranges != '',
+                    TranslationState.has_id_ranges,
                     rx.text(
-                        'Selected ranges: ' + TranslationState.translation_ranges,
+                        'Selected ranges: ' + TranslationState.display_id_ranges,
                         font_size='0.8em',
                     ),
                 ),

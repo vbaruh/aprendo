@@ -1,6 +1,5 @@
 from enum import Enum
 from dataclasses import dataclass
-from typing import Optional
 
 
 class Languages(str, Enum):
@@ -17,6 +16,12 @@ class TranslationDirection(str, Enum):
 class TranslationIdRange:
     start: int
     end: int
+
+    def __str__(self) -> str:
+        return f'{self.start}-{self.end}'
+
+    def __repr__(self) -> str:
+        return f'{self.start}-{self.end}'
 
 
 @dataclass
