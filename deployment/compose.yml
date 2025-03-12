@@ -1,0 +1,13 @@
+services:
+  aprendo_backend:
+    image: aprendo-backend
+    ports:
+     - 8000:8000
+    volumes:
+      - /home/vitali/projects/aprendo/data/translations.csv:/home/aprendo/translations/translations.csv
+  aprendo_frontend:
+    image: aprendo-frontend
+    ports:
+      - 3000:3000
+    depends_on:
+      - aprendo_backend

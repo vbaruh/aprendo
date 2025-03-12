@@ -23,9 +23,9 @@ def _translations() -> CsvTranslations:
     csv_path = os.path.join(csv_dir, 'translations.csv')
 
     csv = CsvTranslations(csv_path)
-    csv.load_translations()
+    if os.path.exists(csv_path):
+        csv.load_translations()
     thread_state.csv = csv
-    csv.dump_db_info()
 
     return csv
 

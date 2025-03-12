@@ -1,0 +1,17 @@
+FROM aprendo-venv
+
+ARG USER=aprendo
+
+COPY ./deployment/backend_entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+USER $USER
+WORKDIR /home/$USER/app
+
+RUN mkdir /home/$USER/translations
+ENV APRENDO_CSV_DIR=/home/$USER/translations
+
+COPY ./app/rxconfig.py /home/$USER/app/
+COPY ./app/aprendo /home/$USER/app/aprendo
+
+CMD [ "/entrypoint.sh" ]
