@@ -3,6 +3,8 @@ import reflex as rx
 
 import threading
 import logging
+import difflib
+import enum
 
 from typing import List
 
@@ -36,12 +38,30 @@ class Translation(rx.Base):
     target_lang: str
 
 
+class TranslationCorrectness(str, enum.Enum):
+    CORRECT = 'correct'
+    ALMOST = 'almost'
+    INCORRECT = 'incorrect'
+
+
+class DiffOpcode(rx.Base):
+    """Represents a single diff operation from difflib's SequenceMatcher."""
+    tag: str  # 'replace', 'delete', 'insert', or 'equal'
+    i1: int   # Start index in first sequence
+    i2: int   # End index in first sequence
+    j1: int   # Start index in second sequence
+    j2: int   # End index in second sequence
+
+
 class TranslationAttempt(rx.Base):
     translation_id: int
     source_word: str
     user_translation: str
-    is_correct: bool
+    is_correct: TranslationCorrectness
     expected_translations: List[str]
+    matching_translation: str = ''
+    # Store opcodes as a list of DiffOpcode objects
+    diff_opcodes: List[DiffOpcode] = []
 
 
 class TranslationState(rx.State):
@@ -102,20 +122,60 @@ class TranslationState(rx.State):
                 translation_id=self._current_translation_id,
                 source_word=source,
                 user_translation='(skipped)',
-                is_correct=False,
-                expected_translations=expected
+                is_correct=TranslationCorrectness.INCORRECT,
+                expected_translations=expected,
+                matching_translation=''
             ))
         else:
             logger.debug('source: %s, expected: %s', source, expected)
-            is_correct = self.user_input.lower().strip() in [t.lower() for t in expected]
+            user_input_lower = self.user_input.lower().strip()
+            expected_lower = [t.lower() for t in expected]
 
-            self.attempts.insert(0, TranslationAttempt(
-                translation_id=self._current_translation_id,
-                source_word=source,
-                user_translation=self.user_input,
-                is_correct=is_correct,
-                expected_translations=expected
-            ))
+            # Check for exact match first
+            if user_input_lower in expected_lower:
+                matching_idx = expected_lower.index(user_input_lower)
+                self.attempts.insert(0, TranslationAttempt(
+                    translation_id=self._current_translation_id,
+                    source_word=source,
+                    user_translation=self.user_input,
+                    is_correct=TranslationCorrectness.CORRECT,
+                    expected_translations=expected,
+                    matching_translation=expected[matching_idx]
+                ))
+            else:
+                # Check for almost match using difflib
+                best_match = ''
+                best_ratio = 0.0
+                threshold = 0.8  # 80% similarity threshold for 'almost' correct
+
+
+                for translation in expected:
+                    ratio = difflib.SequenceMatcher(None, user_input_lower, translation.lower()).ratio()
+                    if ratio > best_ratio:
+                        best_ratio = ratio
+                        best_match = translation
+
+                if best_ratio >= threshold:
+                    correctness = TranslationCorrectness.ALMOST
+                    # Get opcodes for diff visualization
+                    matcher = difflib.SequenceMatcher(None, self.user_input.lower(), best_match.lower())
+                    # Convert opcodes to a list of DiffOpcode objects
+                    diff_opcodes = [DiffOpcode(tag=tag, i1=i1, i2=i2, j1=j1, j2=j2)
+                                   for tag, i1, i2, j1, j2 in matcher.get_opcodes()]
+                else:
+                    correctness = TranslationCorrectness.INCORRECT
+                    best_match = ''
+                    diff_opcodes = []
+
+                self.attempts.insert(0, TranslationAttempt(
+                    translation_id=self._current_translation_id,
+                    source_word=source,
+                    user_translation=self.user_input,
+                    is_correct=correctness,
+                    expected_translations=expected,
+                    matching_translation=best_match,
+                    diff_opcodes=diff_opcodes
+                ))
 
         self._has_checked_translation = True
 
@@ -212,6 +272,63 @@ class TranslationState(rx.State):
             self.translation_ranges_error = ''
 
 
+def render_diff(user_input: str, correct_translation: str, opcodes: List[DiffOpcode]) -> rx.Component:
+    """Render a visual diff between user input and correct translation.
+
+    Args:
+        user_input: The user's input translation
+        correct_translation: The correct translation
+        opcodes: List of DiffOpcode objects from difflib.SequenceMatcher.get_opcodes()
+
+    Returns:
+        List of components showing the diff visualization
+    """
+    # Pre-process opcodes to create components
+    # This happens on the backend, so we can use Python conditionals here
+    return rx.hstack(
+        rx.foreach(
+            opcodes,
+            lambda opcode: render_diff_component(user_input, correct_translation, opcode)
+        ),
+        spacing='0'
+    )
+
+
+def render_diff_component(user_input: str, correct_translation: str, opcode: DiffOpcode) -> rx.Component:
+    # tag, i1, i2, j1, j2 = opcode.tag, opcode.i1, opcode.i2, opcode.j1, opcode.j2
+    return rx.cond(
+        opcode.tag == 'replace',
+        rx.hstack(
+            rx.text(
+                user_input[opcode.i1:opcode.i2],
+                text_decoration='line-through',
+                color='red',
+            ),
+            rx.text(
+                correct_translation[opcode.j1:opcode.j2],
+                color='green',
+            ),
+            spacing='0',
+        ),
+        rx.cond(
+            opcode.tag == 'delete',
+            rx.text(
+                user_input[opcode.i1:opcode.i2],
+                text_decoration='line-through',
+                color='red',
+            ),
+            rx.cond(
+                opcode.tag == 'insert',
+                rx.text(
+                    correct_translation[opcode.j1:opcode.j2],
+                    color='green',
+                ),
+                rx.text(user_input[opcode.i1:opcode.i2]),
+            ),
+        )
+    )
+
+
 def translation_table() -> rx.Component:
     """Create the translation history table."""
     return rx.table.root(
@@ -230,18 +347,53 @@ def translation_table() -> rx.Component:
                     rx.table.cell(
                         rx.hstack(
                             rx.cond(
-                                attempt.is_correct,
+                                attempt.is_correct == TranslationCorrectness.CORRECT,
                                 rx.icon('badge-check', color='green'),
-                                rx.icon('badge-x', color='red'),
+                                rx.cond(
+                                    attempt.is_correct == TranslationCorrectness.ALMOST,
+                                    rx.icon('badge-percent', color='yellow'),
+                                    rx.icon('badge-x', color='gray'),
+                                )
                             ),
                             attempt.user_translation,
                         )
                     ),
                     rx.table.cell(
-                        rx.hstack(
-                            rx.foreach(
-                                attempt.expected_translations,
-                                lambda trans: rx.text(trans + ', '),
+                        rx.cond(
+                            attempt.is_correct == TranslationCorrectness.CORRECT,
+                            # For correct answers, show matching translation first and underlined
+                            rx.vstack(
+                                rx.text(attempt.matching_translation, text_decoration='underline'),
+                                rx.foreach(
+                                    attempt.expected_translations,
+                                    lambda trans: rx.cond(
+                                        trans != attempt.matching_translation,
+                                        rx.text(trans),
+                                    )
+                                )
+                            ),
+                            rx.cond(
+                                attempt.is_correct == TranslationCorrectness.ALMOST,
+                                # For almost correct answers, show matching translation first with correction hints
+                                rx.vstack(
+                                    render_diff(attempt.user_translation, attempt.matching_translation, attempt.diff_opcodes),
+                                    rx.foreach(
+                                        attempt.expected_translations,
+                                        lambda trans: rx.cond(
+                                            trans != attempt.matching_translation,
+                                            rx.text(trans),
+                                        )
+                                    ),
+                                    align_items='start',
+                                    spacing='0'
+                                ),
+                                # For incorrect answers, show all translations normally
+                                rx.vstack(
+                                    rx.foreach(
+                                        attempt.expected_translations,
+                                        lambda trans: rx.text(trans),
+                                    )
+                                )
                             )
                         )
                     ),
